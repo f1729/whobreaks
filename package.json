@@ -4,8 +4,8 @@
   "description": "Find out what breaks before you touch a file. Dependency graph + impact analysis + MCP server for AI coding tools.",
   "main": "./dist/index.js",
   "bin": {
-    "whobreaks": "./dist/index.js",
-    "wb": "./dist/index.js"
+    "whobreaks": "dist/index.js",
+    "wb": "dist/index.js"
   },
   "type": "module",
   "files": [
@@ -34,7 +34,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/f1729/whobreaks"
+    "url": "git+https://github.com/f1729/whobreaks.git"
   },
   "homepage": "https://github.com/f1729/whobreaks#readme",
   "engines": {
