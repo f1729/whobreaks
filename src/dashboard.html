@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>architect — dependency graph</title>
+<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-muted: #7d8590;
+    --accent: #2f81f7;
+    --accent-glow: rgba(47,129,247,0.15);
+    --danger: #f85149;
+    --warning: #e3b341;
+    --success: #3fb950;
+    --purple: #bc8cff;
+    --node-default: #2f81f7;
+    --node-orphan: #7d8590;
+    --node-god: #f85149;
+    --node-high-impact: #e3b341;
+    --edge-default: rgba(48,54,61,0.8);
+    --edge-circular: #f85149;
+  }
+
+  html, body { width: 100%; height: 100%; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; overflow: hidden; }
+
+  #app { display: grid; grid-template-columns: 280px 1fr; grid-template-rows: 48px 1fr; height: 100vh; }
+
+  /* ── Top bar ── */
+  #topbar {
+    grid-column: 1 / -1;
+    display: flex; align-items: center; gap: 16px;
+    padding: 0 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    z-index: 10;
+  }
+  #topbar .logo { font-weight: 700; font-size: 15px; letter-spacing: -0.3px; color: var(--text); }
+  #topbar .logo span { color: var(--accent); }
+  #topbar .sep { flex: 1; }
+  #topbar .stat { color: var(--text-muted); font-size: 12px; }
+  #topbar .stat strong { color: var(--text); }
+  #topbar .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); box-shadow: 0 0 6px var(--success); flex-shrink: 0; }
+  #topbar .dot.loading { background: var(--warning); box-shadow: 0 0 6px var(--warning); }
+  #topbar .dot.error { background: var(--danger); box-shadow: 0 0 6px var(--danger); }
+  #search-wrap { position: relative; }
+  #search { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 5px 10px 5px 28px; font-size: 12px; width: 220px; outline: none; }
+  #search:focus { border-color: var(--accent); }
+  #search-wrap::before { content: '⌕'; position: absolute; left: 8px; top: 50%; transform: translateY(-50%); color: var(--text-muted); font-size: 14px; pointer-events: none; }
+  #search-results { position: absolute; top: calc(100% + 4px); left: 0; width: 100%; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; z-index: 100; max-height: 280px; overflow-y: auto; display: none; }
+  #search-results.open { display: block; }
+  .search-item { padding: 7px 10px; cursor: pointer; font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .search-item:hover, .search-item.selected { background: var(--accent-glow); color: var(--text); }
+  .search-item .badge { float: right; font-size: 10px; background: var(--border); border-radius: 3px; padding: 1px 4px; color: var(--text-muted); }
+
+  /* ── Sidebar ── */
+  #sidebar {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    display: flex; flex-direction: column;
+  }
+  .sidebar-section { padding: 12px 14px; border-bottom: 1px solid var(--border); }
+  .sidebar-section h3 { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-muted); margin-bottom: 10px; }
+
+  .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .stat-card { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; }
+  .stat-card .val { font-size: 20px; font-weight: 700; color: var(--text); line-height: 1; }
+  .stat-card .lbl { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+  .stat-card.danger .val { color: var(--danger); }
+  .stat-card.warning .val { color: var(--warning); }
+  .stat-card.success .val { color: var(--success); }
+
+  .issue-list { display: flex; flex-direction: column; gap: 4px; }
+  .issue-item { font-size: 11px; color: var(--text-muted); padding: 5px 8px; border-radius: 4px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+  .issue-item:hover { background: var(--accent-glow); color: var(--text); }
+  .issue-item .tag { font-size: 10px; border-radius: 3px; padding: 1px 5px; }
+  .tag-circular { background: rgba(248,81,73,0.15); color: var(--danger); }
+  .tag-orphan   { background: rgba(125,133,144,0.15); color: var(--text-muted); }
+  .tag-god      { background: rgba(248,81,73,0.15); color: var(--danger); }
+  .tag-impact   { background: rgba(227,179,65,0.15); color: var(--warning); }
+
+  .legend { display: flex; flex-direction: column; gap: 5px; }
+  .legend-item { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--text-muted); }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+  .controls { display: flex; flex-direction: column; gap: 6px; }
+  .ctrl-row { display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: var(--text-muted); }
+  input[type=range] { -webkit-appearance: none; width: 100px; height: 3px; background: var(--border); border-radius: 2px; outline: none; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%; background: var(--accent); cursor: pointer; }
+  .btn { background: var(--bg); border: 1px solid var(--border); border-radius: 5px; color: var(--text-muted); padding: 4px 10px; font-size: 11px; cursor: pointer; }
+  .btn:hover { border-color: var(--accent); color: var(--text); }
+
+  /* ── Detail panel (right side, overlaid on graph) ── */
+  #detail {
+    position: absolute; right: 0; top: 48px;
+    width: 300px; height: calc(100vh - 48px);
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    overflow-y: auto;
+    transform: translateX(100%);
+    transition: transform 0.2s ease;
+    z-index: 5;
+  }
+  #detail.open { transform: translateX(0); }
+  #detail-close { position: absolute; top: 10px; right: 10px; background: none; border: none; color: var(--text-muted); font-size: 16px; cursor: pointer; padding: 2px 6px; }
+  #detail-close:hover { color: var(--text); }
+  #detail-content { padding: 14px; padding-top: 36px; }
+  #detail-content h2 { font-size: 12px; font-weight: 600; color: var(--text); word-break: break-all; margin-bottom: 8px; }
+  #detail-content .risk { display: inline-block; font-size: 10px; border-radius: 3px; padding: 2px 6px; margin-bottom: 12px; }
+  .risk-high   { background: rgba(248,81,73,0.15); color: var(--danger); }
+  .risk-medium { background: rgba(227,179,65,0.15); color: var(--warning); }
+  .risk-low    { background: rgba(63,185,80,0.15); color: var(--success); }
+  #detail-content .section-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.7px; color: var(--text-muted); margin: 12px 0 4px; }
+  #detail-content .file-list { display: flex; flex-direction: column; gap: 2px; }
+  #detail-content .file-ref { font-size: 11px; color: var(--accent); cursor: pointer; padding: 2px 4px; border-radius: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #detail-content .file-ref:hover { background: var(--accent-glow); }
+  #detail-content .export-chip { display: inline-block; font-size: 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 3px; padding: 1px 5px; margin: 2px 2px 0 0; color: var(--text-muted); }
+  #detail-content .meta-row { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); padding: 2px 0; }
+  #detail-content .meta-row strong { color: var(--text); }
+
+  /* ── Canvas ── */
+  #graph-wrap { position: relative; overflow: hidden; }
+  svg { width: 100%; height: 100%; }
+
+  .node circle { stroke-width: 1.5px; cursor: pointer; transition: r 0.15s; }
+  .node circle:hover { stroke-width: 2.5px; }
+  .node.selected circle { stroke-width: 3px; filter: drop-shadow(0 0 6px currentColor); }
+  .node text { font-size: 9px; fill: var(--text-muted); pointer-events: none; dominant-baseline: middle; }
+
+  .link { stroke-opacity: 0.5; fill: none; }
+  .link.circular { stroke: var(--edge-circular); stroke-opacity: 0.7; stroke-dasharray: 4 2; }
+  .link.highlighted { stroke-opacity: 1; stroke-width: 2px; }
+
+  #tooltip {
+    position: absolute; pointer-events: none;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px 10px; font-size: 11px; max-width: 240px;
+    opacity: 0; transition: opacity 0.1s; z-index: 20;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  }
+  #tooltip .tt-name { font-weight: 600; color: var(--text); margin-bottom: 3px; word-break: break-all; }
+  #tooltip .tt-row { color: var(--text-muted); }
+  #tooltip .tt-row strong { color: var(--text); }
+
+  #empty-state {
+    position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 8px; color: var(--text-muted); pointer-events: none;
+  }
+  #empty-state .big { font-size: 32px; }
+  #empty-state p { font-size: 12px; }
+
+  ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="topbar">
+    <div class="logo">🏗️ <span>architect</span></div>
+    <div class="stat"><strong id="stat-files">—</strong> files</div>
+    <div class="stat"><strong id="stat-edges">—</strong> edges</div>
+    <div class="stat" id="stat-updated">—</div>
+    <div class="sep"></div>
+    <div id="search-wrap">
+      <input id="search" type="text" placeholder="Search files…" autocomplete="off">
+      <div id="search-results"></div>
+    </div>
+    <div class="dot loading" id="status-dot" title="Connecting…"></div>
+  </div>
+
+  <div id="sidebar">
+    <div class="sidebar-section">
+      <h3>Overview</h3>
+      <div class="stat-grid">
+        <div class="stat-card"><div class="val" id="s-files">—</div><div class="lbl">files</div></div>
+        <div class="stat-card"><div class="val" id="s-edges">—</div><div class="lbl">edges</div></div>
+        <div class="stat-card danger"><div class="val" id="s-circular">—</div><div class="lbl">circular</div></div>
+        <div class="stat-card warning"><div class="val" id="s-orphans">—</div><div class="lbl">orphans</div></div>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <h3>Issues</h3>
+      <div class="issue-list" id="issue-list">
+        <div style="color:var(--text-muted);font-size:11px">Loading…</div>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <h3>Legend</h3>
+      <div class="legend">
+        <div class="legend-item"><div class="legend-dot" style="background:var(--node-default)"></div> Normal file</div>
+        <div class="legend-item"><div class="legend-dot" style="background:var(--node-god)"></div> God module (20+ dependents)</div>
+        <div class="legend-item"><div class="legend-dot" style="background:var(--node-high-impact)"></div> High impact (10+ affected)</div>
+        <div class="legend-item"><div class="legend-dot" style="background:var(--node-orphan)"></div> Orphan (unused)</div>
+        <div class="legend-item"><div class="legend-dot" style="background:var(--edge-circular); border-radius:0; height:2px; width:20px"></div> Circular dependency</div>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <h3>Controls</h3>
+      <div class="controls">
+        <div class="ctrl-row"><span>Link distance</span><input type="range" id="ctrl-distance" min="30" max="300" value="80"></div>
+        <div class="ctrl-row"><span>Charge</span><input type="range" id="ctrl-charge" min="-500" max="-10" value="-120"></div>
+        <div class="ctrl-row"><span>Labels</span><input type="checkbox" id="ctrl-labels" checked></div>
+        <button class="btn" id="btn-reset">Reset zoom</button>
+        <button class="btn" id="btn-reload">Reload graph</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="graph-wrap">
+    <div id="empty-state" style="display:none">
+      <div class="big">🏗️</div>
+      <p>No files found. Run <code>architect watch .</code> first.</p>
+    </div>
+    <svg id="svg"></svg>
+    <div id="tooltip"></div>
+  </div>
+</div>
+
+<div id="detail">
+  <button id="detail-close">✕</button>
+  <div id="detail-content">
+    <h2 id="d-name">—</h2>
+    <span class="risk" id="d-risk">LOW</span>
+    <div class="section-label">Meta</div>
+    <div id="d-meta"></div>
+    <div class="section-label">Exports</div>
+    <div id="d-exports"></div>
+    <div class="section-label" id="d-imp-label">Imports from</div>
+    <div class="file-list" id="d-imports"></div>
+    <div class="section-label" id="d-dep-label">Imported by</div>
+    <div class="file-list" id="d-dependents"></div>
+    <div class="section-label">Impact analysis</div>
+    <div id="d-impact" style="font-size:11px;color:var(--text-muted)">Loading…</div>
+  </div>
+</div>
+
+<script>
+const API = window.location.origin;
+let graphData = null;
+let summaryData = null;
+let simulation = null;
+let selectedNode = null;
+let showLabels = true;
+
+const svg = d3.select('#svg');
+const tooltip = document.getElementById('tooltip');
+const detail = document.getElementById('detail');
+
+let g, linkGroup, nodeGroup;
+
+async function fetchJSON(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  return r.json();
+}
+
+async function loadGraph() {
+  setDot('loading');
+  try {
+    [graphData, summaryData] = await Promise.all([
+      fetchJSON(`${API}/graph`),
+      fetchJSON(`${API}/summary`),
+    ]);
+    setDot('ok');
+    renderSidebar();
+    renderGraph();
+    updateTopbar();
+  } catch (e) {
+    setDot('error');
+    console.error(e);
+  }
+}
+
+function setDot(state) {
+  const dot = document.getElementById('status-dot');
+  dot.className = 'dot ' + (state === 'ok' ? '' : state);
+  dot.title = state === 'ok' ? 'Connected' : state === 'loading' ? 'Loading…' : 'Error — is architect watch running?';
+}
+
+function updateTopbar() {
+  document.getElementById('stat-files').textContent = graphData.nodes.length.toLocaleString();
+  document.getElementById('stat-edges').textContent = graphData.edges.length.toLocaleString();
+  const d = new Date(graphData.lastUpdate);
+  document.getElementById('stat-updated').textContent = 'Updated ' + d.toLocaleTimeString();
+}
+
+function renderSidebar() {
+  document.getElementById('s-files').textContent = summaryData.totalFiles;
+  document.getElementById('s-edges').textContent = summaryData.totalEdges;
+  document.getElementById('s-circular').textContent = summaryData.circularDependencies.length;
+  document.getElementById('s-orphans').textContent = summaryData.orphanFiles.length;
+
+  const list = document.getElementById('issue-list');
+  const items = [];
+
+  for (const { cycle } of summaryData.circularDependencies.slice(0, 5)) {
+    const label = cycle.map(p => p.split('/').pop()).join(' ↔ ');
+    items.push(`<div class="issue-item" title="${cycle.join(' → ')}" onclick="focusFile('${cycle[0]}')">
+      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${label}</span>
+      <span class="tag tag-circular">circular</span>
+    </div>`);
+  }
+  for (const { path: p, dependentCount } of summaryData.godModules.slice(0, 3)) {
+    items.push(`<div class="issue-item" onclick="focusFile('${p}')">
+      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${shortPath(p)}</span>
+      <span class="tag tag-god">${dependentCount} deps</span>
+    </div>`);
+  }
+  for (const { path: p, affectedCount } of summaryData.highImpactFiles.slice(0, 3)) {
+    items.push(`<div class="issue-item" onclick="focusFile('${p}')">
+      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${shortPath(p)}</span>
+      <span class="tag tag-impact">${affectedCount} affected</span>
+    </div>`);
+  }
+  for (const p of summaryData.orphanFiles.slice(0, 3)) {
+    items.push(`<div class="issue-item" onclick="focusFile('${p}')">
+      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${shortPath(p)}</span>
+      <span class="tag tag-orphan">orphan</span>
+    </div>`);
+  }
+
+  list.innerHTML = items.length ? items.join('') : '<div style="color:var(--text-muted);font-size:11px">No issues detected ✅</div>';
+}
+
+function shortPath(p) {
+  const parts = p.split('/');
+  return parts.length > 3 ? '…/' + parts.slice(-2).join('/') : p;
+}
+
+const circularPaths = new Set();
+
+function buildCircularSet() {
+  circularPaths.clear();
+  if (!summaryData) return;
+  for (const { cycle } of summaryData.circularDependencies) {
+    for (let i = 0; i < cycle.length - 1; i++) {
+      circularPaths.add(cycle[i] + '|' + cycle[i + 1]);
+      circularPaths.add(cycle[i + 1] + '|' + cycle[i]);
+    }
+  }
+}
+
+function nodeColor(node) {
+  if (!summaryData) return 'var(--node-default)';
+  const p = node.path;
+  if (summaryData.godModules.some(g => g.path === p)) return 'var(--node-god)';
+  if (summaryData.highImpactFiles.some(h => h.path === p)) return 'var(--node-high-impact)';
+  if (summaryData.orphanFiles.includes(p)) return 'var(--node-orphan)';
+  return 'var(--node-default)';
+}
+
+function nodeRadius(node) {
+  const depCount = node.dependentCount || 0;
+  return Math.max(5, Math.min(20, 5 + Math.sqrt(depCount) * 2));
+}
+
+function renderGraph() {
+  if (!graphData || !graphData.nodes.length) {
+    document.getElementById('empty-state').style.display = 'flex';
+    return;
+  }
+  document.getElementById('empty-state').style.display = 'none';
+  buildCircularSet();
+
+  svg.selectAll('*').remove();
+
+  const w = document.getElementById('graph-wrap').clientWidth;
+  const h = document.getElementById('graph-wrap').clientHeight;
+
+  const zoom = d3.zoom().scaleExtent([0.05, 8]).on('zoom', (e) => {
+    g.attr('transform', e.transform);
+  });
+  svg.call(zoom);
+
+  document.getElementById('btn-reset').onclick = () => {
+    svg.transition().duration(400).call(zoom.transform, d3.zoomIdentity);
+  };
+
+  g = svg.append('g');
+
+  svg.append('defs').append('marker')
+    .attr('id', 'arrow')
+    .attr('viewBox', '0 -4 8 8')
+    .attr('refX', 14)
+    .attr('refY', 0)
+    .attr('markerWidth', 6)
+    .attr('markerHeight', 6)
+    .attr('orient', 'auto')
+    .append('path')
+    .attr('d', 'M0,-4L8,0L0,4')
+    .attr('fill', 'var(--border)');
+
+  const nodeById = new Map(graphData.nodes.map(n => [n.path, n]));
+
+  const links = graphData.edges
+    .filter(e => nodeById.has(e.source) && nodeById.has(e.target))
+    .map(e => ({ source: e.source, target: e.target, symbols: e.symbols }));
+
+  const nodes = graphData.nodes.map(n => ({ ...n }));
+
+  linkGroup = g.append('g').attr('class', 'links');
+  nodeGroup = g.append('g').attr('class', 'nodes');
+
+  const link = linkGroup.selectAll('line')
+    .data(links)
+    .join('line')
+    .attr('class', d => 'link' + (circularPaths.has(d.source + '|' + d.target) ? ' circular' : ''))
+    .attr('stroke', d => circularPaths.has(d.source + '|' + d.target) ? 'var(--edge-circular)' : 'var(--edge-default)')
+    .attr('stroke-width', 1)
+    .attr('marker-end', 'url(#arrow)');
+
+  const charge = parseInt(document.getElementById('ctrl-charge').value);
+  const distance = parseInt(document.getElementById('ctrl-distance').value);
+
+  simulation = d3.forceSimulation(nodes)
+    .force('link', d3.forceLink(links).id(d => d.path).distance(distance).strength(0.5))
+    .force('charge', d3.forceManyBody().strength(charge))
+    .force('center', d3.forceCenter(w / 2, h / 2))
+    .force('collision', d3.forceCollide().radius(d => nodeRadius(d) + 4));
+
+  const node = nodeGroup.selectAll('g')
+    .data(nodes)
+    .join('g')
+    .attr('class', 'node')
+    .call(d3.drag()
+      .on('start', (e, d) => { if (!e.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+      .on('drag', (e, d) => { d.fx = e.x; d.fy = e.y; })
+      .on('end', (e, d) => { if (!e.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; })
+    )
+    .on('click', (e, d) => { e.stopPropagation(); selectNode(d, node, link); })
+    .on('mouseover', (e, d) => showTooltip(e, d))
+    .on('mousemove', (e) => moveTooltip(e))
+    .on('mouseout', () => hideTooltip());
+
+  node.append('circle')
+    .attr('r', d => nodeRadius(d))
+    .attr('fill', d => nodeColor(d))
+    .attr('stroke', d => nodeColor(d))
+    .attr('fill-opacity', 0.2);
+
+  const labels = node.append('text')
+    .attr('x', d => nodeRadius(d) + 3)
+    .attr('y', 0)
+    .text(d => d.relativePath.split('/').pop() || d.relativePath)
+    .attr('display', showLabels ? null : 'none');
+
+  simulation.on('tick', () => {
+    link
+      .attr('x1', d => d.source.x)
+      .attr('y1', d => d.source.y)
+      .attr('x2', d => d.target.x)
+      .attr('y2', d => d.target.y);
+    node.attr('transform', d => `translate(${d.x},${d.y})`);
+  });
+
+  svg.on('click', () => { clearSelection(node, link); closeDetail(); });
+
+  document.getElementById('ctrl-distance').oninput = (e) => {
+    simulation.force('link').distance(parseInt(e.target.value));
+    simulation.alpha(0.3).restart();
+  };
+  document.getElementById('ctrl-charge').oninput = (e) => {
+    simulation.force('charge').strength(parseInt(e.target.value));
+    simulation.alpha(0.3).restart();
+  };
+  document.getElementById('ctrl-labels').onchange = (e) => {
+    showLabels = e.target.checked;
+    labels.attr('display', showLabels ? null : 'none');
+  };
+}
+
+function showTooltip(e, d) {
+  const depCount = d.dependentCount || (graphData ? graphData.edges.filter(edge => edge.target === d.path).length : 0);
+  const depOnCount = d.dependencyCount || (graphData ? graphData.edges.filter(edge => edge.source === d.path).length : 0);
+  tooltip.innerHTML = `
+    <div class="tt-name">${shortPath(d.relativePath || d.path)}</div>
+    <div class="tt-row">Imported by: <strong>${depCount}</strong></div>
+    <div class="tt-row">Imports: <strong>${depOnCount}</strong></div>
+    <div class="tt-row">Exports: <strong>${(d.exports || []).length}</strong></div>
+    <div class="tt-row">Lines: <strong>${d.linesOfCode || '—'}</strong></div>
+  `;
+  tooltip.style.opacity = '1';
+  moveTooltip(e);
+}
+
+function moveTooltip(e) {
+  const wrap = document.getElementById('graph-wrap').getBoundingClientRect();
+  let x = e.clientX - wrap.left + 12;
+  let y = e.clientY - wrap.top + 12;
+  if (x + 250 > wrap.width) x -= 260;
+  if (y + 120 > wrap.height) y -= 120;
+  tooltip.style.left = x + 'px';
+  tooltip.style.top = y + 'px';
+}
+
+function hideTooltip() { tooltip.style.opacity = '0'; }
+
+function selectNode(d, nodeSelection, linkSelection) {
+  selectedNode = d;
+  const connected = new Set();
+  graphData.edges.forEach(e => {
+    if (e.source === d.path || e.source.path === d.path) connected.add(e.target.path || e.target);
+    if (e.target === d.path || e.target.path === d.path) connected.add(e.source.path || e.source);
+  });
+
+  nodeSelection.classed('selected', n => n.path === d.path);
+  nodeSelection.selectAll('circle').attr('fill-opacity', n =>
+    n.path === d.path || connected.has(n.path) ? 0.6 : 0.08
+  );
+  linkSelection.classed('highlighted', l => {
+    const src = l.source.path || l.source;
+    const tgt = l.target.path || l.target;
+    return src === d.path || tgt === d.path;
+  });
+  linkSelection.attr('stroke-opacity', l => {
+    const src = l.source.path || l.source;
+    const tgt = l.target.path || l.target;
+    return (src === d.path || tgt === d.path) ? 0.9 : 0.1;
+  });
+
+  openDetail(d);
+}
+
+function clearSelection(nodeSelection, linkSelection) {
+  selectedNode = null;
+  nodeSelection.classed('selected', false);
+  nodeSelection.selectAll('circle').attr('fill-opacity', 0.2);
+  linkSelection.classed('highlighted', false).attr('stroke-opacity', 0.5);
+}
+
+async function openDetail(d) {
+  detail.classList.add('open');
+  const rel = d.relativePath || d.path;
+  document.getElementById('d-name').textContent = rel;
+
+  const deps = graphData.edges.filter(e => (e.target.path || e.target) === d.path);
+  const depOn = graphData.edges.filter(e => (e.source.path || e.source) === d.path);
+  const depCount = deps.length;
+  const risk = depCount > 20 ? 'HIGH' : depCount > 5 ? 'MEDIUM' : 'LOW';
+  const riskEl = document.getElementById('d-risk');
+  riskEl.textContent = risk + ' risk';
+  riskEl.className = 'risk risk-' + risk.toLowerCase();
+
+  document.getElementById('d-meta').innerHTML = `
+    <div class="meta-row"><span>Lines</span><strong>${d.linesOfCode || '—'}</strong></div>
+    <div class="meta-row"><span>Exports</span><strong>${(d.exports || []).length}</strong></div>
+    <div class="meta-row"><span>Imported by</span><strong>${depCount}</strong></div>
+    <div class="meta-row"><span>Imports</span><strong>${depOn.length}</strong></div>
+  `;
+
+  const exports = d.exports || [];
+  document.getElementById('d-exports').innerHTML = exports.length
+    ? exports.map(e => `<span class="export-chip">${e.name} <span style="color:var(--text-muted)">${e.kind}</span></span>`).join('')
+    : '<span style="color:var(--text-muted);font-size:11px">none</span>';
+
+  const makeFileList = (edges, pathExtractor) => edges.slice(0, 15).map(e => {
+    const p = pathExtractor(e);
+    const n = graphData.nodes.find(n => n.path === p);
+    const relPath = n ? n.relativePath : p;
+    return `<div class="file-ref" onclick="focusFile('${p}')">${shortPath(relPath)}</div>`;
+  }).join('') + (edges.length > 15 ? `<div style="color:var(--text-muted);font-size:10px;margin-top:2px">+${edges.length - 15} more</div>` : '');
+
+  document.getElementById('d-imp-label').textContent = `Imports from (${depOn.length})`;
+  document.getElementById('d-imports').innerHTML = depOn.length
+    ? makeFileList(depOn, e => e.target.path || e.target)
+    : '<span style="color:var(--text-muted);font-size:11px">nothing</span>';
+
+  document.getElementById('d-dep-label').textContent = `Imported by (${depCount})`;
+  document.getElementById('d-dependents').innerHTML = depCount
+    ? makeFileList(deps, e => e.source.path || e.source)
+    : '<span style="color:var(--text-muted);font-size:11px">nothing</span>';
+
+  document.getElementById('d-impact').textContent = 'Loading…';
+  try {
+    const imp = await fetchJSON(`${API}/impact?file=${encodeURIComponent(rel)}`);
+    document.getElementById('d-impact').innerHTML = `
+      <div class="meta-row"><span>Direct dependents</span><strong>${imp.directDependents.length}</strong></div>
+      <div class="meta-row"><span>Transitive</span><strong>${imp.transitiveDependents.length}</strong></div>
+      <div class="meta-row"><span>Total affected</span><strong>${imp.totalAffected}</strong></div>
+    `;
+  } catch {
+    document.getElementById('d-impact').textContent = 'Unavailable';
+  }
+}
+
+function closeDetail() {
+  detail.classList.remove('open');
+  selectedNode = null;
+}
+
+document.getElementById('detail-close').onclick = () => {
+  closeDetail();
+  if (nodeGroup) {
+    nodeGroup.selectAll('circle').attr('fill-opacity', 0.2);
+    nodeGroup.classed('selected', false);
+    if (linkGroup) linkGroup.attr('stroke-opacity', 0.5);
+  }
+};
+
+function focusFile(path) {
+  if (!graphData) return;
+  const nodeData = graphData.nodes.find(n => n.path === path);
+  if (!nodeData) return;
+  if (simulation) {
+    const nodes = simulation.nodes();
+    const target = nodes.find(n => n.path === path);
+    if (target) {
+      const w = document.getElementById('graph-wrap').clientWidth;
+      const h = document.getElementById('graph-wrap').clientHeight;
+      const svgEl = document.getElementById('svg');
+      const zoom = d3.zoom().scaleExtent([0.05, 8]).on('zoom', e => g.attr('transform', e.transform));
+      d3.select(svgEl).call(zoom);
+      d3.select(svgEl).transition().duration(500).call(
+        zoom.transform,
+        d3.zoomIdentity.translate(w / 2, h / 2).scale(1.5).translate(-target.x, -target.y)
+      );
+    }
+  }
+  openDetail(nodeData);
+}
+
+const searchInput = document.getElementById('search');
+const searchResults = document.getElementById('search-results');
+let searchIndex = -1;
+
+searchInput.addEventListener('input', () => {
+  const q = searchInput.value.trim().toLowerCase();
+  if (!q || !graphData) { searchResults.classList.remove('open'); return; }
+  const matches = graphData.nodes
+    .filter(n => (n.relativePath || n.path).toLowerCase().includes(q))
+    .slice(0, 12);
+  if (!matches.length) { searchResults.classList.remove('open'); return; }
+  searchIndex = -1;
+  searchResults.innerHTML = matches.map((n, i) => {
+    const depCount = graphData.edges.filter(e => (e.target.path || e.target) === n.path).length;
+    return `<div class="search-item" data-path="${n.path}" data-i="${i}">
+      ${shortPath(n.relativePath || n.path)}
+      <span class="badge">${depCount} deps</span>
+    </div>`;
+  }).join('');
+  searchResults.classList.add('open');
+  searchResults.querySelectorAll('.search-item').forEach(el => {
+    el.addEventListener('click', () => {
+      focusFile(el.dataset.path);
+      searchResults.classList.remove('open');
+      searchInput.value = '';
+    });
+  });
+});
+
+searchInput.addEventListener('keydown', e => {
+  const items = searchResults.querySelectorAll('.search-item');
+  if (e.key === 'ArrowDown') { searchIndex = Math.min(searchIndex + 1, items.length - 1); }
+  else if (e.key === 'ArrowUp') { searchIndex = Math.max(searchIndex - 1, 0); }
+  else if (e.key === 'Enter' && searchIndex >= 0) { items[searchIndex]?.click(); return; }
+  else if (e.key === 'Escape') { searchResults.classList.remove('open'); return; }
+  items.forEach((el, i) => el.classList.toggle('selected', i === searchIndex));
+});
+
+document.addEventListener('click', e => {
+  if (!document.getElementById('search-wrap').contains(e.target)) searchResults.classList.remove('open');
+});
+
+document.getElementById('btn-reload').onclick = () => loadGraph();
+
+let pollTimer = null;
+function startPolling() {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    try {
+      const h = await fetchJSON(`${API}/health`);
+      if (graphData && h.lastUpdate > graphData.lastUpdate) loadGraph();
+      setDot('ok');
+    } catch { setDot('error'); }
+  }, 3000);
+}
+
+window.focusFile = focusFile;
+
+loadGraph().then(() => startPolling());
+</script>
+</body>
+</html>

@@ -1,0 +1,52 @@
+{
+  "name": "whobreaks",
+  "version": "0.1.0",
+  "description": "Find out what breaks before you touch a file. Dependency graph + impact analysis + MCP server for AI coding tools.",
+  "main": "./dist/index.js",
+  "bin": {
+    "whobreaks": "./dist/index.js",
+    "wb": "./dist/index.js"
+  },
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc && cp src/dashboard.html dist/dashboard.html",
+    "dev": "tsc --watch",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "dependency-graph",
+    "impact-analysis",
+    "architecture",
+    "ai",
+    "mcp",
+    "cursor",
+    "claude",
+    "claude-code",
+    "typescript",
+    "codebase",
+    "vibe-coding",
+    "monorepo"
+  ],
+  "author": "f1729",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/f1729/whobreaks"
+  },
+  "homepage": "https://github.com/f1729/whobreaks#readme",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "chokidar": "^4.0.3",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.7",
+    "typescript": "^5.7.3"
+  }
+}
